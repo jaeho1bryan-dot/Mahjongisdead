@@ -1,5 +1,6 @@
 import type { Choice, HandResult } from '../shared/protocol.js'
 import { meldTiles, tileName } from '../src/tiles.js'
+import { translateYaku } from './yaku.js'
 import {
   canRobClosedKan, Majiang, handTiles, type Draw, type EngineMessage, type ExhaustiveDraw,
   type Meld, type Reply, type ReplyCallback, type Summary, type Win,
@@ -121,7 +122,7 @@ export class TablePlayer extends Majiang.Player {
     this.result = {
       title: win.baojia === null ? '쯔모 · 직접 뽑은 패로 화료' : '론 · 버려진 패로 화료',
       winner, fu: win.fu, han: win.fanshu, points: win.defen,
-      yaku: win.hupai.map(yaku => ({ name: yaku.name, han: String(yaku.fanshu) })),
+      yaku: win.hupai.map(yaku => ({ name: translateYaku(yaku.name), han: String(yaku.fanshu) })),
       deltas: this.deltas(win.fenpei), hand: handTiles(hand), melds: [...hand._fulou],
       ura: win.fubaopai ?? [],
     }

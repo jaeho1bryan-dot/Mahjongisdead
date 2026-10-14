@@ -6,7 +6,8 @@ import test, { type TestContext } from 'node:test'
 import { WebSocket } from 'ws'
 import type { ClientMessage, RoomState, ServerMessage } from '../shared/protocol.js'
 import { createServer, originAllowed, parseMessage, type ServerOptions } from '../server/index.js'
-import { Room } from '../server/room.js'
+import { DisposableGame, Room } from '../server/room.js'
+import { handTiles, Majiang } from '../server/engine.js'
 
 class Client {
   readonly ws: WebSocket
@@ -359,4 +360,63 @@ test('the first dealer is drawn at random instead of always being the room owner
     room.dispose()
   }
   assert.ok(dealers.size > 1, `dealer was always seat ${[...dealers]}`)
+})
+
+for (const secondRon of [true, false]) test(`ron cancels pending calls immediately and preserves a second player's ${secondRon ? 'ron' : 'pass'}`, async t => {
+  const wall = new Majiang.Shan(Majiang.rule())
+  const pool = wall._pai.slice()
+  const take = (tile: string) => {
+    const index = pool.indexOf(tile)
+    assert.ok(index >= 0, `No ${tile} available`)
+    return pool.splice(index, 1)[0]
+  }
+  const winner = handTiles(Majiang.Shoupai.fromString('m234456p22345s45')).map(take)
+  const second = handTiles(Majiang.Shoupai.fromString('m234456p22345s45')).map(take)
+  const caller = handTiles(Majiang.Shoupai.fromString('m17p18s66789z1234')).map(take)
+  const discard = take('s6')
+  const firstDraw = take('z7')
+  const dealer = [discard, ...pool.splice(0, 12)]
+  wall._pai = [...pool, ...[...dealer, ...winner, ...caller, ...second, firstDraw].reverse()]
+  wall._baopai = [wall._pai[4]]
+  wall._fubaopai = [wall._pai[9]]
+  const qipai = DisposableGame.prototype.qipai
+  t.mock.method(DisposableGame.prototype, 'qipai', function (this: DisposableGame) { qipai.call(this, wall) })
+  const room = new Room('RONTEST', 'hand', { actionTimeoutMs: 60_000, botDelayMs: 60_000 })
+  t.after(() => room.dispose())
+  for (let id = 0; id < 4; id++) room.join(String(id), undefined as unknown as WebSocket)
+  room.start(room.seats[0]!)
+  const wait = async (ready: () => boolean) => {
+    const until = Date.now() + 2000
+    while (!ready() && Date.now() < until) await new Promise(done => setTimeout(done, 1))
+    assert.ok(ready(), 'Game did not reach expected phase')
+  }
+  await wait(() => room.seats.some(slot => slot?.prompt?.decisions.some(d => d.reply.dapai === 's6')))
+  const byWind = (wind: number) => room.seats.find(slot => slot && room.state(slot).seats[slot.id].wind === wind)!
+  const dealerSlot = byWind(0), winnerSlot = byWind(1), callerSlot = byWind(2), secondSlot = byWind(3)
+  const act = (slot: typeof winnerSlot, kind: string) => {
+    const state = room.state(slot)
+    room.act(slot, state.promptId!, state.choices.find(c => c.kind === kind)!.id)
+  }
+  room.act(dealerSlot, dealerSlot.prompt!.id, dealerSlot.prompt!.decisions.find(d => d.reply.dapai === 's6')!.choice.id)
+  await wait(() => Boolean(winnerSlot.prompt && callerSlot.prompt && secondSlot.prompt))
+  assert.ok(room.state(winnerSlot).choices.some(c => c.kind === 'chi'))
+  const oldCaller = room.state(callerSlot)
+  const pon = oldCaller.choices.find(c => c.kind === 'pon')!
+  assert.ok(pon)
+  act(secondSlot, 'ron')
+  assert.deepEqual(room.state(callerSlot).choices, [])
+  assert.equal(room.state(callerSlot).promptId, null)
+  assert.throws(() => room.act(callerSlot, oldCaller.promptId!, pon.id), /만료된 선택/)
+  assert.deepEqual(room.state(winnerSlot).choices.map(c => c.kind), ['ron', 'pass'])
+  assert.throws(() => room.act(winnerSlot, winnerSlot.prompt!.id, 'chi:s4-56'), /허용되지 않은/)
+  act(winnerSlot, secondRon ? 'ron' : 'pass')
+  await wait(() => Boolean(room.state(secondSlot).result))
+  assert.ok(room.seats.every(slot => room.state(slot!).choices.every(c => c.kind === 'continue')))
+  if (secondRon) {
+    const firstWinner = room.state(secondSlot).result!.winner
+    assert.equal(firstWinner, winnerSlot.name)
+    for (const slot of room.seats) act(slot!, 'continue')
+    await wait(() => room.state(secondSlot).result?.winner !== firstWinner)
+    assert.equal(room.state(secondSlot).result!.winner, secondSlot.name)
+  } else assert.equal(room.state(secondSlot).result!.winner, secondSlot.name)
 })

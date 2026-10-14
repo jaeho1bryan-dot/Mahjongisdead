@@ -83,6 +83,7 @@ export class Room {
   ranking?: RoomState['ranking']
   disposed = false
   private game?: DisposableGame
+  private ronDeclared = false
   private broadcastTimer?: ReturnType<typeof setTimeout>
   readonly id: string
   readonly mode: GameMode
@@ -173,6 +174,12 @@ export class Room {
 
   private prompt(slot: Occupant, decisions: Decision[], callback: ReplyCallback): void {
     if (this.disposed) return
+    if (decisions.some(d => !['ron', 'pass', 'chi', 'pon', 'kan'].includes(d.choice.kind)))
+      this.ronDeclared = false
+    if (this.ronDeclared) {
+      if (!decisions.some(d => d.choice.kind === 'ron')) { callback({}); return }
+      decisions = decisions.filter(d => d.choice.kind === 'ron' || d.choice.kind === 'pass')
+    }
     if (slot.prompt) clearTimeout(slot.prompt.timer)
     const delay = slot.socket ? this.options.actionTimeoutMs
       : Math.max(this.options.botDelayMs, slot.autoplayAt - Date.now())
@@ -201,6 +208,17 @@ export class Room {
     if (!prompt || this.disposed) return
     clearTimeout(prompt.timer)
     slot.prompt = undefined
+    if (decision.choice.kind === 'ron') {
+      this.ronDeclared = true
+      for (const other of this.seats) {
+        if (!other?.prompt) continue
+        if (other.prompt.decisions.some(d => d.choice.kind === 'ron')) {
+          other.prompt.decisions = other.prompt.decisions.filter(d => d.choice.kind === 'ron' || d.choice.kind === 'pass')
+        } else {
+          this.resolve(other, { choice: { id: 'pass:', kind: 'pass', label: '넘기기' }, reply: {} })
+        }
+      }
+    }
     prompt.callback(decision.reply)
     this.broadcast()
   }

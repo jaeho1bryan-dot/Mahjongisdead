@@ -250,6 +250,7 @@ test('result presentation exposes scoring but never forwards the engine full-gam
     fenpei: [-500, 1100, -300, -300],
   } })
   assert.equal(player.result?.winner, 'B')
+  assert.deepEqual(player.result?.yaku, [{ name: '멘젠쯔모', han: '1' }])
   assert.equal(player.result?.hand?.length, 14)
   assert.deepEqual(player.result?.deltas, [-500, 1100, -300, -300])
   assert.deepEqual(offers.map(d => d.choice.kind), ['continue'])
@@ -351,7 +352,7 @@ test('full Game lets thirteen orphans rob a closed kan without revealing a new k
   game.do_sync()
   const result = players[1].result!
   assert.equal(result.winner, players[1].model.player[1])
-  assert.ok(result.yaku.some(yaku => yaku.name.startsWith('国士無双')), JSON.stringify(result))
+  assert.ok(result.yaku.some(yaku => yaku.name.startsWith('국사무쌍')), JSON.stringify(result))
   assert.deepEqual(result.deltas, [-32000, 32000, 0, 0])
   assert.equal(players[1].model.shan!.baopai.length, 1)
   assert.ok(final)
