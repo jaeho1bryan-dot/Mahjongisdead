@@ -173,6 +173,39 @@ test('riichi requires sufficient points, closed tenpai and remaining draws; nine
   assert.ok(terminals.feed({ zimo: { l: 0, p: 'm2' } }).some(d => d.choice.kind === 'abort'))
 })
 
+test('last-wall calls and kans are forbidden, while a no-yaku hand may ron with houtei', () => {
+  const calling = Majiang.Shoupai.fromString('m1233p123s456z111')
+  assert.deepEqual(Majiang.Game.get_chi_mianzi(rule, calling, 'm3-', 0), [])
+  assert.deepEqual(Majiang.Game.get_peng_mianzi(rule, calling, 'm3+', 0), [])
+  const kan = Majiang.Shoupai.fromString('m333p123s456z1122')
+  assert.deepEqual(Majiang.Game.get_gang_mianzi(rule, kan, 'm3+', 0, 0), [])
+  kan.zimo('m3')
+  assert.deepEqual(Majiang.Game.get_gang_mianzi(rule, kan, null, 0, 0), [])
+  assert.deepEqual(Majiang.Game.get_gang_mianzi(rule, kan, null, 60, 4), [])
+  const houtei = fixture('m123p123s45z11,m789-')
+  assert.equal(houtei.player.allow_hule(houtei.player.shoupai, 's6+'), false)
+  houtei.player.shan.paishu = 0
+  const choices = houtei.feed({ dapai: { l: 1, p: 's6' } })
+  assert.deepEqual(choices.map(d => d.choice.kind), ['ron', 'pass'])
+})
+
+test('post-riichi closed kan preserves waits, rejects changed waits and respects rule prohibition', () => {
+  const allowed = fixture('m111p234s23467z11*')
+  const choices = allowed.feed({ zimo: { l: 0, p: 'm1' } })
+  assert.ok(choices.some(d => d.reply.gang === 'm1111'))
+  const hand = allowed.player.shoupai
+  assert.deepEqual(Majiang.Util.tingpai(hand.clone().dapai('m1_')), ['s5', 's8'])
+  assert.deepEqual(Majiang.Util.tingpai(hand.clone().gang('m1111')), ['s5', 's8'])
+  assert.deepEqual(Majiang.Game.get_gang_mianzi(
+    Majiang.rule({ 'リーチ後暗槓許可レベル': 0 }), hand, null, 60, 0,
+  ), [])
+  const changed = fixture('m1112345678999*')
+  assert.ok(!changed.feed({ zimo: { l: 0, p: 'm1' } }).some(d => d.choice.kind === 'kan'))
+  const riichiCall = fixture('m333p123s456z1122*')
+  const reactions = riichiCall.feed({ dapai: { l: 1, p: 'm3' } })
+  assert.ok(reactions.every(d => !['chi', 'pon', 'kan'].includes(d.choice.kind)))
+})
+
 test('result presentation exposes scoring but never forwards the engine full-game log', () => {
   const { player, feed } = fixture('m234456p22345s45')
   const offers = feed({ hule: {
@@ -237,7 +270,7 @@ test('deterministic full Game accepts deferred-eligibility ron and ends with sco
   const game = new FixedGame(players, () => {}, testRule)
   game.do_sync()
   assert.equal(ronAccepted, true)
-  assert.equal(players[1].result?.title, 'Ron · discard win')
+  assert.equal(players[1].result?.title, '론 · 버려진 패로 화료')
   assert.ok(players[1].result!.yaku.length > 0)
   assert.ok(final)
   assert.equal(final.rank[1], 1)

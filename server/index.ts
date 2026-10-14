@@ -41,18 +41,18 @@ function shortString(value: unknown, max: number): value is string {
 
 export function parseMessage(raw: string): ClientMessage {
   let value: unknown
-  try { value = JSON.parse(raw) } catch { throw new Error('Invalid JSON') }
-  if (!record(value) || typeof value.type !== 'string') throw new Error('Invalid message')
+  try { value = JSON.parse(raw) } catch { throw new Error('올바른 JSON 형식이 아닙니다') }
+  if (!record(value) || typeof value.type !== 'string') throw new Error('올바른 요청이 아닙니다')
   const exact = (keys: string[]) => Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key))
   const name = () => {
     if (!shortString(value.name, 24) || !value.name.trim()
       || [...value.name].some(char => char.charCodeAt(0) < 32 || (char.charCodeAt(0) >= 127 && char.charCodeAt(0) <= 159)))
-      throw new Error('Name must contain 1–24 visible characters')
+      throw new Error('이름은 공백만 사용하지 않고 1~24자로 입력해 주세요')
     return value.name.trim()
   }
   const roomId = () => {
     if (typeof value.roomId !== 'string' || !/^[A-Fa-f0-9]{6}$/.test(value.roomId))
-      throw new Error('Enter a valid six-character room code')
+      throw new Error('올바른 6자리 대기실 코드를 입력해 주세요')
     return value.roomId.toUpperCase()
   }
   switch (value.type) {
@@ -76,7 +76,7 @@ export function parseMessage(raw: string): ClientMessage {
         return { type: 'act', promptId: value.promptId, choiceId: value.choiceId }
       break
   }
-  throw new Error('Invalid message or unsupported action')
+  throw new Error('올바르지 않은 요청이거나 지원하지 않는 행동입니다')
 }
 
 export function originAllowed(origin: string | undefined, host: string | undefined, allowed: string[], devPort: number | null): boolean {
@@ -107,7 +107,7 @@ async function serve(req: IncomingMessage, res: ServerResponse, dist: string): P
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Referrer-Policy', 'same-origin')
   if (req.method !== 'GET' && req.method !== 'HEAD') {
-    res.writeHead(405, { Allow: 'GET, HEAD' }).end('Method not allowed')
+    res.writeHead(405, { Allow: 'GET, HEAD' }).end('허용되지 않은 요청 방식입니다')
     return
   }
   let pathname: string
@@ -115,26 +115,26 @@ async function serve(req: IncomingMessage, res: ServerResponse, dist: string): P
     if (!req.url || req.url.length > 2048) throw new Error('Invalid path')
     pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname)
     if (pathname.includes('\0') || pathname.includes('\\')) throw new Error('Invalid path')
-  } catch { res.writeHead(400).end('Invalid path'); return }
+  } catch { res.writeHead(400).end('올바르지 않은 경로입니다'); return }
   if (pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
       .end(req.method === 'HEAD' ? undefined : '{"ok":true}')
     return
   }
-  if (pathname === '/ws') { res.writeHead(426).end('WebSocket upgrade required'); return }
+  if (pathname === '/ws') { res.writeHead(426).end('웹소켓 연결이 필요합니다'); return }
   const requested = resolve(dist, `.${pathname}`)
-  if (!inside(dist, requested)) { res.writeHead(403).end('Forbidden'); return }
+  if (!inside(dist, requested)) { res.writeHead(403).end('접근할 수 없습니다'); return }
   let file = requested
   try {
     let details = await stat(file).catch(() => null)
     if (!details?.isFile()) {
-      if (extname(pathname)) { res.writeHead(404).end('Not found'); return }
+      if (extname(pathname)) { res.writeHead(404).end('찾을 수 없습니다'); return }
       file = resolve(dist, 'index.html')
       details = await stat(file)
     }
     const [realRoot, realFile] = await Promise.all([realpath(dist), realpath(file)])
     if (!inside(realRoot, realFile) || !details.isFile() || details.size > 32 * 1024 * 1024) {
-      res.writeHead(403).end('Forbidden')
+      res.writeHead(403).end('접근할 수 없습니다')
       return
     }
     const html = extname(file) === '.html'
@@ -146,7 +146,7 @@ async function serve(req: IncomingMessage, res: ServerResponse, dist: string): P
     if (req.method === 'HEAD') res.end()
     else createReadStream(realFile).on('error', () => res.destroy()).pipe(res)
   } catch {
-    if (!res.headersSent) res.writeHead(404).end('Build the client to serve the application')
+    if (!res.headersSent) res.writeHead(404).end('애플리케이션을 제공하려면 클라이언트를 빌드해 주세요')
     else res.destroy()
   }
 }
@@ -198,14 +198,14 @@ export function createServer(options: ServerOptions = {}) {
 
   const active = (connection: Connection, ws: WebSocket): { room: Room; seat: Occupant } => {
     if (!connection.room || !connection.seat || connection.room.disposed || connection.seat.socket !== ws)
-      throw new Error('Join or create a room first')
+      throw new Error('먼저 대기실을 만들거나 참가해 주세요')
     return { room: connection.room, seat: connection.seat }
   }
   const handle = (ws: WebSocket, connection: Connection, message: ClientMessage) => {
     if (message.type === 'create' || message.type === 'join' || message.type === 'resume') {
-      if (connection.room) throw new Error('Leave your current room first')
+      if (connection.room) throw new Error('먼저 현재 대기실에서 나가 주세요')
       if (message.type === 'create') {
-        if (rooms.size >= settings.maxRooms) throw new Error('The server is full; try again later')
+        if (rooms.size >= settings.maxRooms) throw new Error('서버가 가득 찼습니다. 잠시 후 다시 시도해 주세요')
         let id: string
         do { id = randomBytes(3).toString('hex').toUpperCase() } while (rooms.has(id))
         const room = new Room(id, message.mode, settings)
@@ -214,7 +214,7 @@ export function createServer(options: ServerOptions = {}) {
         Object.assign(connection, { room, seat })
       } else {
         const room = rooms.get(message.roomId)
-        if (!room || room.disposed) throw new Error('Invalid room or session token')
+        if (!room || room.disposed) throw new Error('대기실 코드 또는 세션 정보가 올바르지 않습니다')
         const seat = message.type === 'join' ? room.join(message.name, ws) : room.resume(message.token, ws)
         Object.assign(connection, { room, seat })
       }
@@ -243,12 +243,12 @@ export function createServer(options: ServerOptions = {}) {
         connection.messages = 0
         connection.windowStart = now
       }
-      if (++connection.messages > settings.rateLimit) { ws.close(1008, 'Rate limit exceeded'); return }
+      if (++connection.messages > settings.rateLimit) { ws.close(1008, '요청이 너무 많습니다'); return }
       try {
-        if (binary) throw new Error('Send JSON text messages')
+        if (binary) throw new Error('JSON 텍스트 형식으로 요청해 주세요')
         handle(ws, connection, parseMessage(data.toString()))
       } catch (error) {
-        send(ws, { type: 'error', message: error instanceof Error ? error.message : 'Invalid request' })
+        send(ws, { type: 'error', message: error instanceof Error ? error.message : '올바른 요청이 아닙니다' })
       }
     })
     ws.once('close', () => {

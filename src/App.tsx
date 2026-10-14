@@ -135,7 +135,7 @@ function Table({ state, send, busy, sound }: { state: RoomState; send: (m: Clien
   const discards = state.choices.filter(c => c.kind === (riichiMode ? 'riichi' : 'discard'))
   const choiceFor = (tile: string, drawn: boolean) => discards.find(c => c.tile?.slice(0, 2) === tile && c.tile.includes('_') === drawn)
   const seconds = state.deadline ? Math.max(0, Math.ceil((state.deadline - now) / 1000)) : null
-  const resultKey = JSON.stringify(state.result)
+  const resultKey = `${state.roundWind}:${state.handNumber}:${state.honba}:${JSON.stringify(state.result)}`
   const showResult = state.result && dismissedResult !== resultKey
   const continueChoice = state.choices.find(c => c.kind === 'continue')
   const actionChoices = state.choices.filter(c => !['discard', 'riichi', 'continue'].includes(c.kind))

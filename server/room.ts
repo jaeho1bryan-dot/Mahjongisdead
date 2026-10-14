@@ -76,9 +76,9 @@ export class Room {
   }
 
   join(name: string, socket: WebSocket): Occupant {
-    if (this.status !== 'waiting') throw new Error('This game has already started')
+    if (this.status !== 'waiting') throw new Error('이미 대국이 시작되었습니다')
     const id = this.seats.findIndex(seat => !seat)
-    if (id < 0) throw new Error('This room is full')
+    if (id < 0) throw new Error('대기실의 모든 자리가 찼습니다')
     const slot: Occupant = { id, name, token: randomBytes(32).toString('hex'), socket, auto: false, autoplayAt: 0 }
     this.seats[id] = slot
     this.lastActive = Date.now()
@@ -90,13 +90,12 @@ export class Room {
   resume(token: string, socket: WebSocket): Occupant {
     const tokenBytes = Buffer.from(token, 'hex')
     const slot = this.seats.find(seat => seat?.token && timingSafeEqual(Buffer.from(seat.token, 'hex'), tokenBytes))
-    if (!slot) throw new Error('Invalid room or session token')
+    if (!slot) throw new Error('대기실 코드 또는 세션 정보가 올바르지 않습니다')
     const oldSocket = slot.socket
     slot.socket = socket
     slot.auto = false
     slot.autoplayAt = 0
-    if (oldSocket && oldSocket !== socket) oldSocket.close(4001, 'Session resumed elsewhere')
-    if (slot.prompt) this.resetTimer(slot, this.options.actionTimeoutMs)
+    if (oldSocket && oldSocket !== socket) oldSocket.close(4001, '다른 연결에서 세션을 복구했습니다')
     this.lastActive = Date.now()
     this.session(slot)
     this.broadcast()
@@ -132,11 +131,11 @@ export class Room {
   }
 
   start(slot: Occupant): void {
-    if (slot.id !== this.owner) throw new Error('Only the host can start the game')
-    if (this.status !== 'waiting') throw new Error('This game has already started')
+    if (slot.id !== this.owner) throw new Error('방장만 대국을 시작할 수 있습니다')
+    if (this.status !== 'waiting') throw new Error('이미 대국이 시작되었습니다')
     this.status = 'playing'
     for (let id = 0; id < 4; id++) {
-      this.seats[id] ??= { id, name: `Bot ${id + 1}`, auto: true, autoplayAt: 0 }
+      this.seats[id] ??= { id, name: `봇 ${id + 1}`, auto: true, autoplayAt: 0 }
       const seat = this.seats[id]!
       seat.player = new TablePlayer({
         decide: (_player, decisions, callback) => this.prompt(seat, decisions, callback),
@@ -189,13 +188,13 @@ export class Room {
 
   act(slot: Occupant, promptId: string, choiceId: string): void {
     if (this.status !== 'playing' || !slot.prompt || slot.prompt.id !== promptId)
-      throw new Error('This action is stale or it is not your turn')
+      throw new Error('만료된 선택이거나 현재 자신의 차례가 아닙니다')
     if (Date.now() >= slot.prompt.deadline) {
       this.automatic(slot)
-      throw new Error('This decision has timed out')
+      throw new Error('선택 시간이 초과되었습니다')
     }
     const decision = slot.prompt.decisions.find(item => item.choice.id === choiceId)
-    if (!decision) throw new Error('Illegal action; choose one of the offered actions')
+    if (!decision) throw new Error('허용되지 않은 선택입니다. 표시된 행동을 선택해 주세요')
     this.lastActive = Date.now()
     this.resolve(slot, decision)
   }
@@ -221,7 +220,7 @@ export class Room {
       }
       const pendingDelta = this.status === 'playing' ? self.player?.result?.deltas[id] ?? 0 : 0
       return {
-        id, name: slot?.name ?? 'Open seat', bot: Boolean(slot?.auto), connected: Boolean(slot?.socket),
+        id, name: slot?.name ?? '빈자리', bot: Boolean(slot?.auto), connected: Boolean(slot?.socket),
         wind, score: (model?.defen?.[id] ?? 25000) + pendingDelta,
         concealed: hand ? handTiles(hand).length : 0,
         ...(ownTiles ? { hand: ownTiles } : {}),
@@ -229,7 +228,7 @@ export class Room {
         melds: hand ? [...hand._fulou] : [], river: hasHand ? [...model!.he[wind]._pai] : [],
         riichi: Boolean(hand?.lizhi),
       }
-    })
+    }).filter(seat => this.status !== 'waiting' || Boolean(this.seats[seat.id]))
     const choices: Choice[] = self.prompt?.decisions.map(d => d.choice) ?? []
     return {
       roomId: this.id, mode: this.mode, status: this.status, self: self.id, owner: this.owner, seats,
@@ -238,7 +237,7 @@ export class Room {
       remaining: model?.shan?.paishu ?? 0, dora: [...(model?.shan?.baopai ?? [])],
       turn: hasHand && model!.lunban >= 0 ? model!.player_id[model!.lunban] : -1,
       choices, promptId: self.prompt?.id ?? null, deadline: self.prompt?.deadline ?? null,
-      event: self.player?.event ?? 'Waiting for players', result: self.player?.result ?? null,
+      event: self.player?.event ?? '참가자를 기다리고 있습니다', result: self.player?.result ?? null,
       ...(this.ranking ? { ranking: this.ranking } : {}),
     }
   }
@@ -263,7 +262,7 @@ export class Room {
       if (slot?.player) slot.player.disposed = true
       if (slot) {
         slot.prompt = undefined
-        slot.socket?.close(4002, 'Room expired')
+        slot.socket?.close(4002, '대기실 이용 시간이 만료되었습니다')
       }
     }
     this.game?.dispose()

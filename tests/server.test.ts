@@ -82,7 +82,8 @@ async function setup(t: TestContext, options: ServerOptions = {}) {
   }
 }
 function assertPrivate(state: RoomState): void {
-  assert.equal(state.seats.length, 4)
+  if (state.status === 'waiting') assert.ok(state.seats.length >= 1 && state.seats.length <= 4)
+  else assert.equal(state.seats.length, 4)
   for (const seat of state.seats) {
     if (seat.id !== state.self) {
       assert.equal(Object.hasOwn(seat, 'hand'), false)
@@ -130,18 +131,19 @@ test('create, join, session tokens, owner-only start, capacity and owner transfe
   assert.equal(state.owner, 0)
   assert.equal(state.self, 1)
   b.send({ type: 'start' })
-  assert.match((await b.wait('error')).message, /host/)
+  assert.match((await b.wait('error')).message, /방장/)
   a.send({ type: 'leave' })
   await a.wait('left')
   const transferred = await b.state(s => s.owner === 1)
-  assert.equal(transferred.seats[0].name, 'Open seat')
+  assert.equal(transferred.seats.some(seat => seat.id === 0), false)
+  assert.equal(transferred.seats.length, 1)
   b.send({ type: 'start' })
   const playing = await b.state(s => s.seats[s.self].concealed >= 13)
   assert.equal(playing.status, 'playing')
   assert.equal(playing.seats.filter(seat => seat.bot).length, 3)
   assertPrivate(playing)
   a.send({ type: 'join', roomId: session.roomId, name: 'Late' })
-  assert.match((await a.wait('error')).message, /already started/)
+  assert.match((await a.wait('error')).message, /이미 대국/)
 })
 
 test('four-player gameplay keeps deals/draws private and rejects out-of-turn, illegal and stale choices', async t => {
@@ -155,7 +157,7 @@ test('four-player gameplay keeps deals/draws private and rejects out-of-turn, il
   }
   const fifth = await env.client()
   fifth.send({ type: 'join', roomId, name: 'Extra' })
-  assert.match((await fifth.wait('error')).message, /full/)
+  assert.match((await fifth.wait('error')).message, /찼습니다/)
   clients[0].send({ type: 'start' })
   const states = await Promise.all(clients.map(client => client.state(s => s.remaining === 69)))
   states.forEach(assertPrivate)
@@ -174,18 +176,18 @@ test('four-player gameplay keeps deals/draws private and rejects out-of-turn, il
   for (let id = 0; id < 4; id++) if (id !== turn) assert.equal(states[id].promptId, null)
   const choice = own.choices.find(c => c.kind === 'discard')!
   clients[(turn + 1) % 4].send({ type: 'act', promptId: own.promptId!, choiceId: choice.id })
-  assert.match((await clients[(turn + 1) % 4].wait('error')).message, /not your turn/)
+  assert.match((await clients[(turn + 1) % 4].wait('error')).message, /차례가 아닙니다/)
   clients[turn].send({ type: 'act', promptId: own.promptId!, choiceId: 'ron:forged' })
-  assert.match((await clients[turn].wait('error')).message, /Illegal/)
+  assert.match((await clients[turn].wait('error')).message, /허용되지 않은/)
   clients[turn].send({ type: 'act', promptId: own.promptId!, choiceId: choice.id })
   const after = await clients[turn].state(s => s.seats[turn].river.length > 0)
   assertPrivate(after)
   assert.equal(after.seats[turn].river[0].slice(0, 2), choice.tile?.slice(0, 2))
   clients[turn].send({ type: 'act', promptId: own.promptId!, choiceId: choice.id })
-  assert.match((await clients[turn].wait('error')).message, /stale|not your turn/)
+  assert.match((await clients[turn].wait('error')).message, /만료된 선택|차례가 아닙니다/)
 })
 
-test('reconnect restores only the bearer seat and its pending decision; takeover revokes the old socket', async t => {
+test('reconnect restores only the bearer seat without extending its deadline; takeover revokes the old socket', async t => {
   const env = await setup(t)
   const a = await env.client()
   a.send({ type: 'create', name: 'Reconnect', mode: 'hand' })
@@ -195,8 +197,9 @@ test('reconnect restores only the bearer seat and its pending decision; takeover
   assertPrivate(state)
   const wrong = await env.client()
   wrong.send({ type: 'resume', roomId: session.roomId, token: '0'.repeat(64) })
-  assert.match((await wrong.wait('error')).message, /Invalid room or session/)
+  assert.match((await wrong.wait('error')).message, /세션 정보가 올바르지/)
   const replacement = await env.client()
+  await new Promise(done => setTimeout(done, 10))
   const closed = new Promise<number>(done => a.ws.once('close', code => done(code)))
   replacement.send({ type: 'resume', roomId: session.roomId, token: session.token })
   assert.equal(await closed, 4001)
@@ -204,17 +207,20 @@ test('reconnect restores only the bearer seat and its pending decision; takeover
   const restored = await replacement.state(s => s.promptId === state.promptId)
   assertPrivate(restored)
   assert.equal(restored.self, state.self)
+  assert.equal(restored.deadline, state.deadline)
   assert.deepEqual(restored.seats[restored.self].hand, state.seats[state.self].hand)
   await replacement.close()
   const third = await env.client()
   third.send({ type: 'resume', roomId: session.roomId, token: session.token })
   await third.wait('session')
-  assertPrivate(await third.state(s => s.promptId === state.promptId))
+  const resumed = await third.state(s => s.promptId === state.promptId)
+  assertPrivate(resumed)
+  assert.equal(resumed.deadline, state.deadline)
   third.send({ type: 'leave' })
   await third.wait('left')
   const fourth = await env.client()
   fourth.send({ type: 'resume', roomId: session.roomId, token: session.token })
-  assert.match((await fourth.wait('error')).message, /Invalid room or session/)
+  assert.match((await fourth.wait('error')).message, /세션 정보가 올바르지/)
 })
 
 test('timed-out humans and paced bots complete a real game with results and final rankings', { timeout: 60_000 }, async t => {
@@ -320,7 +326,7 @@ test('finite room capacity, expiry and idempotent graceful disposal', async t =>
   a.send({ type: 'create', name: 'Host', mode: 'hand' })
   await a.wait('session')
   b.send({ type: 'create', name: 'Other', mode: 'hand' })
-  assert.match((await b.wait('error')).message, /full/)
+  assert.match((await b.wait('error')).message, /가득 찼습니다/)
   const expired = new Promise<number>(done => a.ws.once('close', code => done(code)))
   assert.equal(await expired, 4002)
   assert.equal(env.server.rooms.size, 0)
