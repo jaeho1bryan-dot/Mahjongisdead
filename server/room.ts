@@ -50,6 +50,13 @@ export class DisposableGame extends Majiang.Game {
     this.delay(() => this.gangzimo(), 0)
   }
 
+  override hule(): void {
+    if (this._hule.length === 3 && this._rule['最大同時和了数'] === 2) {
+      return this.pingju('三家和', this.model.shoupai.map(hand => hand.toString()))
+    }
+    super.hule()
+  }
+
   override delay(callback: () => void, timeout = 0): void {
     if (this.disposed) return
     const timer = setTimeout(() => {

@@ -98,6 +98,7 @@ export interface EngineGame {
   get_reply(seat: number): Reply
   say(name: string, seat: number): void
   hule(): void
+  pingju(name: string, hands?: string[]): void
   gangzimo(): void
   reply_gang(): void
   qipai(wall?: Wall): void

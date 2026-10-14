@@ -225,6 +225,15 @@ test('last-wall calls and kans are forbidden, while a no-yaku hand may ron with 
   assert.deepEqual(choices.map(d => d.choice.kind), ['ron', 'pass'])
 })
 
+test('rinshan and chankan supply a yaku for otherwise no-yaku open hands', () => {
+  const normal = fixture('m123p123s45z11,m789-')
+  assert.ok(!normal.feed({ zimo: { l: 0, p: 's6' } }).some(d => d.choice.kind === 'tsumo'))
+  const rinshan = fixture('m123p123s45z11,m789-')
+  assert.ok(rinshan.feed({ gangzimo: { l: 0, p: 's6' } }).some(d => d.choice.kind === 'tsumo'))
+  const chankan = fixture('m123p123s45z11,m789-', ['__________,s666+', '', ''])
+  assert.ok(chankan.feed({ gang: { l: 1, m: 's666+6' } }).some(d => d.choice.kind === 'ron'))
+})
+
 test('post-riichi closed kan preserves waits, rejects changed waits and respects rule prohibition', () => {
   const allowed = fixture('m111p234s23467z11*')
   const choices = allowed.feed({ zimo: { l: 0, p: 'm1' } })
@@ -357,4 +366,71 @@ test('full Game lets thirteen orphans rob a closed kan without revealing a new k
   assert.equal(players[1].model.shan!.baopai.length, 1)
   assert.ok(final)
   assert.deepEqual(final.defen, [-7000, 57000, 25000, 25000])
+})
+
+test('triple closed-kan robbery aborts the hand without scoring or revealing kan dora', async t => {
+  const testRule = Majiang.rule({ '場数': 0, '赤牌': { m: 0, p: 0, s: 0 } })
+  const wall = new Majiang.Shan(testRule)
+  const pool = wall._pai.slice()
+  const take = (tile: string) => {
+    const index = pool.indexOf(tile)
+    assert.ok(index >= 0, `No ${tile} available`)
+    return pool.splice(index, 1)[0]
+  }
+  const hands = [
+    'm111234p456s678z1',
+    'm9p119s19z1234567',
+    'm9p19s119z1234567',
+    'm99p19s19z1234567',
+  ].map(hand => handTiles(Majiang.Shoupai.fromString(hand)).map(take))
+  const draw = take('m1')
+  wall._pai = [...pool, ...[...hands.flat(), draw].reverse()]
+  wall._baopai = [wall._pai[4]]
+  wall._fubaopai = [wall._pai[9]]
+  class FixedGame extends DisposableGame {
+    override qipai(): void { super.qipai(wall) }
+  }
+  const players: TablePlayer[] = []
+  const rons: number[] = []
+  for (let id = 0; id < 4; id++) players.push(new TablePlayer({
+    decide: (player, choices, callback) => {
+      if (choices.some(d => d.choice.kind === 'continue')) return
+      const selected = choices.find(d => d.reply.gang === 'm1111') ?? chooseBot(player, choices)
+      if (selected.choice.kind === 'ron') rons.push(id)
+      callback(selected.reply)
+    },
+    changed: () => {},
+    finished: () => {},
+  }))
+  const game = new FixedGame(players, () => {}, testRule)
+  t.after(() => { players.forEach(player => { player.disposed = true }); game.dispose() })
+  game.speed = 0
+  game.kaiju(0)
+  const until = Date.now() + 2000
+  while (!players.every(player => player.result) && Date.now() < until)
+    await new Promise(done => setTimeout(done, 1))
+  assert.deepEqual(rons, [1, 2, 3])
+  for (const player of players) {
+    assert.equal(player.result?.title, '삼가화')
+    assert.deepEqual(player.result?.deltas, [0, 0, 0, 0])
+    assert.equal(player.model.shan!.baopai.length, 1)
+  }
+  assert.deepEqual(game.model.defen, [25000, 25000, 25000, 25000])
+})
+
+test('triple added-kan robbery follows the same abortive-draw rule', () => {
+  let drawName: string | undefined
+  class RecordingGame extends DisposableGame {
+    override pingju(name: string): void { drawName = name }
+    override delay(callback: () => void): void { callback() }
+    override get_reply(): { hule: string } { return { hule: '-' } }
+    allow_hule(): boolean { return true }
+  }
+  const game = new RecordingGame([], () => {}, rule)
+  game.model.lunban = 0
+  game._gang = 'm111+1'
+  game._hule = []
+  game.reply_gang()
+  assert.equal(drawName, '三家和')
+  game.dispose()
 })
