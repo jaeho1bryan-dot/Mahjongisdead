@@ -1,4 +1,5 @@
 import type { Choice, HandResult } from '../shared/protocol.js'
+import { yakuName, yakuValue } from '../shared/yaku.js'
 import { meldTiles, tileName } from '../src/tiles.js'
 import {
   canRobClosedKan, Majiang, handTiles, type Draw, type EngineMessage, type ExhaustiveDraw,
@@ -120,8 +121,8 @@ export class TablePlayer extends Majiang.Player {
     const hand = Majiang.Shoupai.fromString(win.shoupai)
     this.result = {
       title: win.baojia === null ? '쯔모 · 직접 뽑은 패로 화료' : '론 · 버려진 패로 화료',
-      winner, fu: win.fu, han: win.fanshu, points: win.defen,
-      yaku: win.hupai.map(yaku => ({ name: yaku.name, han: String(yaku.fanshu) })),
+      winner, fu: win.fu, han: win.fanshu, yakuman: win.damanguan, points: win.defen,
+      yaku: win.hupai.map(yaku => ({ name: yakuName(yaku.name), han: yakuValue(yaku.fanshu) })),
       deltas: this.deltas(win.fenpei), hand: handTiles(hand), melds: [...hand._fulou],
       ura: win.fubaopai ?? [],
     }
@@ -152,6 +153,21 @@ const drawNames: Record<string, string> = {
 
 function decision(kind: Choice['kind'], label: string, reply: Reply, tile?: string, meld?: string): Decision {
   return { choice: { id: `${kind}:${tile ?? meld ?? ''}`, kind, label, ...(tile ? { tile } : {}), ...(meld ? { meld } : {}) }, reply }
+}
+
+const reactionKinds = new Set<Choice['kind']>(['ron', 'chi', 'pon', 'kan', 'pass'])
+
+/**
+ * Every player answers a discard (or added kan) at the same time, but the engine resolves the answers by priority:
+ * ron > pon/open kan > chi. Once a higher-priority answer is chosen, lower-priority calls can no longer happen,
+ * so remove them from the other players' pending choices. Players who can also ron keep ron/pass (double ron).
+ */
+export function remainingReactions(chosen: Decision, decisions: Decision[]): Decision[] {
+  if (!decisions.every(d => reactionKinds.has(d.choice.kind))) return decisions
+  if (chosen.choice.kind === 'ron') return decisions.filter(d => d.choice.kind === 'ron' || d.choice.kind === 'pass')
+  if (chosen.reply.fulou && (chosen.choice.kind === 'pon' || chosen.choice.kind === 'kan'))
+    return decisions.filter(d => d.choice.kind !== 'chi')
+  return decisions
 }
 
 export function chooseBot(player: TablePlayer, decisions: Decision[]): Decision {

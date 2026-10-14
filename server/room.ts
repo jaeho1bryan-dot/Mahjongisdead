@@ -2,7 +2,7 @@ import { randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto
 import { WebSocket } from 'ws'
 import type { Choice, GameMode, RoomState, Seat, ServerMessage } from '../shared/protocol.js'
 import { canRobClosedKan, createSecureWall, handTiles, Majiang, type ReplyCallback, type Summary, type Wall } from './engine.js'
-import { chooseBot, TablePlayer, type Decision } from './player.js'
+import { chooseBot, remainingReactions, TablePlayer, type Decision } from './player.js'
 
 export interface RoomOptions { actionTimeoutMs: number; botDelayMs: number }
 interface Prompt {
@@ -202,7 +202,20 @@ export class Room {
     clearTimeout(prompt.timer)
     slot.prompt = undefined
     prompt.callback(decision.reply)
+    this.withdrawOutranked(slot, decision)
     this.broadcast()
+  }
+
+  // The engine waits for all four answers to a discard, so the other open prompts belong to the same discard.
+  private withdrawOutranked(chosen: Occupant, decision: Decision): void {
+    for (const slot of this.seats) {
+      if (!slot?.prompt || slot === chosen) continue
+      const remaining = remainingReactions(decision, slot.prompt.decisions)
+      if (remaining.length === slot.prompt.decisions.length) continue
+      const pass = remaining.find(d => d.choice.kind === 'pass')
+      if (pass && remaining.every(d => d === pass)) this.resolve(slot, pass)
+      else slot.prompt.decisions = remaining
+    }
   }
 
   act(slot: Occupant, promptId: string, choiceId: string): void {

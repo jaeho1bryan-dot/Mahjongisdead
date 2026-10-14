@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createSecureWall, handTiles, Majiang, type EngineMessage, type Summary } from '../server/engine.js'
-import { chooseBot, TablePlayer, type Decision } from '../server/player.js'
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
+import { chooseBot, remainingReactions, TablePlayer, type Decision } from '../server/player.js'
+import { yakuName, yakuValue } from '../shared/yaku.js'
 import { DisposableGame } from '../server/room.js'
 
 const rule = Majiang.rule()
@@ -351,9 +355,63 @@ test('full Game lets thirteen orphans rob a closed kan without revealing a new k
   game.do_sync()
   const result = players[1].result!
   assert.equal(result.winner, players[1].model.player[1])
-  assert.ok(result.yaku.some(yaku => yaku.name.startsWith('国士無双')), JSON.stringify(result))
+  assert.ok(result.yaku.some(yaku => yaku.name.startsWith('국사무쌍') && yaku.han === '역만'), JSON.stringify(result))
+  assert.equal(result.yakuman, 1)
   assert.deepEqual(result.deltas, [-32000, 32000, 0, 0])
   assert.equal(players[1].model.shan!.baopai.length, 1)
   assert.ok(final)
   assert.deepEqual(final.defen, [-7000, 57000, 25000, 25000])
+})
+
+test('a ron withdraws other players\' chi/pon/kan offers on the same discard, while pon/kan withdraws chi', () => {
+  // One m3 discard seen from three seats: the next player may chi or ron, another may pon or open kan, another may ron.
+  const chiAndRon = fixture('m12p123s456z11122').feed({ dapai: { l: 3, p: 'm3' } })
+  assert.deepEqual(new Set(chiAndRon.map(d => d.choice.kind)), new Set(['ron', 'chi', 'pass']))
+  const ponAndKan = fixture('m333p123s456z1122').feed({ dapai: { l: 2, p: 'm3' } })
+  assert.deepEqual(new Set(ponAndKan.map(d => d.choice.kind)), new Set(['pon', 'kan', 'pass']))
+  const ron = fixture('m12p123s456z11122').feed({ dapai: { l: 1, p: 'm3' } })
+    .find(d => d.choice.kind === 'ron')!
+
+  assert.deepEqual(remainingReactions(ron, ponAndKan).map(d => d.choice.kind), ['pass'])
+  assert.deepEqual(remainingReactions(ron, chiAndRon).map(d => d.choice.kind), ['ron', 'pass'])
+  const pon = ponAndKan.find(d => d.choice.kind === 'pon')!
+  assert.deepEqual(remainingReactions(pon, chiAndRon).map(d => d.choice.kind), ['ron', 'pass'])
+  const kan = ponAndKan.find(d => d.choice.kind === 'kan')!
+  assert.deepEqual(remainingReactions(kan, chiAndRon).map(d => d.choice.kind), ['ron', 'pass'])
+  const chi = chiAndRon.find(d => d.choice.kind === 'chi')!
+  assert.equal(remainingReactions(chi, ponAndKan), ponAndKan)
+  const pass = chiAndRon.find(d => d.choice.kind === 'pass')!
+  assert.equal(remainingReactions(pass, ponAndKan), ponAndKan)
+  const turn = fixture('m234456p22345s45').feed({ zimo: { l: 0, p: 'z1' } })
+  assert.equal(remainingReactions(ron, turn), turn)
+})
+
+test('every yaku name produced by the engine is shown in Korean with Korean han labels', () => {
+  const source = readFileSync(join(dirname(createRequire(import.meta.url).resolve('@kobalab/majiang-core')), 'hule.js'), 'utf8')
+  const names = new Set([...source.matchAll(/name: *'([^']+)'/g)].map(match => match[1]))
+  assert.ok(names.size > 40)
+  for (const name of names) {
+    if (/^(場風|自風) $/.test(name)) {
+      for (const wind of ['東', '南', '西', '北']) assert.match(yakuName(name + wind), /^(장풍패|자풍패) [동남서북]$/)
+      continue
+    }
+    const korean = yakuName(name)
+    assert.notEqual(korean, name, `missing translation for ${name}`)
+    assert.doesNotMatch(korean, /[\u3040-\u30ff\u4e00-\u9fff]/, `${name} -> ${korean}`)
+  }
+  assert.equal(yakuName('場風 東'), '장풍패 동')
+  assert.equal(yakuName('自風 南'), '자풍패 남')
+  assert.equal(yakuName('翻牌 中'), '역패 중')
+  assert.equal(yakuName('門前清自摸和'), '멘젠쯔모')
+  assert.equal(yakuValue(2), '2판')
+  assert.equal(yakuValue('*'), '역만')
+  assert.equal(yakuValue('**'), '더블 역만')
+
+  const { player, feed } = fixture('m234456p22345s45')
+  feed({ hule: {
+    l: 1, shoupai: 'm123456p234s56788', baojia: null, fubaopai: null,
+    fu: 20, fanshu: 2, defen: 1500, hupai: [{ name: '門前清自摸和', fanshu: 1 }, { name: '平和', fanshu: 1 }],
+    fenpei: [-700, 1500, -400, -400],
+  } })
+  assert.deepEqual(player.result?.yaku, [{ name: '멘젠쯔모', han: '1판' }, { name: '핑후', han: '1판' }])
 })
