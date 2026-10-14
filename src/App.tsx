@@ -94,8 +94,9 @@ function Lobby({ state, send, busy }: { state: RoomState; send: (m: ClientMessag
     {copyError && <p role="status">주소창의 주소와 방 코드를 친구에게 공유해 주세요.</p>}
     <div className="lobby-seats">{Array.from({ length: 4 }, (_, i) => {
       const seat = state.seats.find(s => s.id === i)
-      return <div className="lobby-seat" key={i}><span className="avatar">{winds[i]}</span><strong>{seat?.name || '빈 자리'}</strong><small>{seat ? (i === state.owner ? '방장' : '준비 완료') : '시작하면 봇이 참여합니다'}</small></div>
+      return <div className="lobby-seat" key={i}><span className="avatar">{i + 1}</span><strong>{seat?.name || '빈 자리'}</strong><small>{seat ? (i === state.owner ? '방장' : '준비 완료') : '시작하면 봇이 참여합니다'}</small></div>
     })}</div>
+    <p className="muted">대국을 시작하면 친(오야)은 방장과 관계없이 무작위로 정해집니다.</p>
     {state.self === state.owner ? <button className="primary" disabled={busy} onClick={() => send({ type: 'start' })}>대국 시작 <span>→</span></button> : <p className="waiting-label">방장이 시작하기를 기다리고 있습니다.</p>}
     <p className="muted">진행 중 새로고침해도 같은 탭에서 자리를 복구합니다.</p>
   </main>

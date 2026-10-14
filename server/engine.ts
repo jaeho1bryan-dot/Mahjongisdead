@@ -91,7 +91,15 @@ export interface EngineGame {
   speed: number
   _rule: Rule
   _timeout_id?: ReturnType<typeof setTimeout>
+  _gang: string | null
+  _hule: number[]
+  _neng_rong: (boolean | number)[]
   kaiju(dealer?: number): void
+  get_reply(seat: number): Reply
+  say(name: string, seat: number): void
+  hule(): void
+  gangzimo(): void
+  reply_gang(): void
   qipai(wall?: Wall): void
   stop(callback?: () => void): void
   delay(callback: () => void, timeout?: number): void
@@ -135,6 +143,7 @@ interface Engine {
   Shan: new(rule: Rule) => Wall
   Util: {
     xiangting(hand: Hand): number
+    xiangting_guoshi(hand: Hand): number
     tingpai(hand: Hand): string[]
     hule(hand: Hand, winningTile: string | null, parameters: Record<string, unknown>): Score
   }
@@ -167,4 +176,10 @@ export function handTiles(hand: Hand): string[] {
     }
   }
   return tiles
+}
+
+/** Thirteen orphans may ron the tile of another player's closed kan (国士無双の暗槓搶槓). */
+export function canRobClosedKan(hand: Hand, tile: string, ronAllowed: boolean | number): boolean {
+  if (!ronAllowed || hand._fulou.length) return false
+  return Majiang.Util.xiangting_guoshi(hand.clone().zimo(tile)) === -1
 }

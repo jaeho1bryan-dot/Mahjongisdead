@@ -6,6 +6,7 @@ import test, { type TestContext } from 'node:test'
 import { WebSocket } from 'ws'
 import type { ClientMessage, RoomState, ServerMessage } from '../shared/protocol.js'
 import { createServer, originAllowed, parseMessage, type ServerOptions } from '../server/index.js'
+import { Room } from '../server/room.js'
 
 class Client {
   readonly ws: WebSocket
@@ -341,4 +342,21 @@ test('heartbeat terminates unresponsive connections', async t => {
   t.after(() => ws.terminate())
   const code = await new Promise<number>(done => ws.once('close', value => done(value)))
   assert.equal(code, 1006)
+})
+
+test('the first dealer is drawn at random instead of always being the room owner', async () => {
+  const dealers = new Set<number>()
+  for (let i = 0; i < 40 && dealers.size < 4; i++) {
+    const room = new Room('DEALER', 'hand', { actionTimeoutMs: 60_000, botDelayMs: 60_000 })
+    const owner = room.join('Host', undefined as unknown as WebSocket)
+    room.start(owner)
+    const until = Date.now() + 2000
+    while (!room.state(owner).seats[0].concealed && Date.now() < until)
+      await new Promise(done => setTimeout(done, 1))
+    const state = room.state(owner)
+    assert.equal(state.owner, 0)
+    dealers.add(state.seats.find(seat => seat.wind === 0)!.id)
+    room.dispose()
+  }
+  assert.ok(dealers.size > 1, `dealer was always seat ${[...dealers]}`)
 })

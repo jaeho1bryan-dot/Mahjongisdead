@@ -1,7 +1,7 @@
 import { randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
 import { WebSocket } from 'ws'
 import type { Choice, GameMode, RoomState, Seat, ServerMessage } from '../shared/protocol.js'
-import { createSecureWall, handTiles, Majiang, type ReplyCallback, type Summary, type Wall } from './engine.js'
+import { canRobClosedKan, createSecureWall, handTiles, Majiang, type ReplyCallback, type Summary, type Wall } from './engine.js'
 import { chooseBot, TablePlayer, type Decision } from './player.js'
 
 export interface RoomOptions { actionTimeoutMs: number; botDelayMs: number }
@@ -23,12 +23,31 @@ export interface Occupant {
   autoplayAt: number
 }
 
-class DisposableGame extends Majiang.Game {
+export class DisposableGame extends Majiang.Game {
   private timers = new Set<ReturnType<typeof setTimeout>>()
   private disposed = false
 
   override qipai(wall?: Wall): void {
     if (!this.disposed) super.qipai(wall ?? createSecureWall(this._rule))
+  }
+
+  // The core engine never lets anyone rob a closed kan. Allow the standard exception for thirteen orphans.
+  override reply_gang(): void {
+    const kan = this._gang
+    if (!kan || !/^[mpsz]\d{4}$/.test(kan)) return super.reply_gang()
+    const model = this.model
+    for (let i = 1; i < 4; i++) {
+      const seat = (model.lunban + i) % 4
+      const tile = kan[0] + kan.slice(-1) + '_+=-'[(4 + model.lunban - seat) % 4]
+      if (!canRobClosedKan(model.shoupai[seat], tile, this._neng_rong[seat])) continue
+      if (this.get_reply(seat).hule) {
+        if (this._rule['最大同時和了数'] === 1 && this._hule.length) continue
+        this.say('rong', seat)
+        this._hule.push(seat)
+      } else this._neng_rong[seat] = false
+    }
+    if (this._hule.length) return this.delay(() => this.hule())
+    this.delay(() => this.gangzimo(), 0)
   }
 
   override delay(callback: () => void, timeout = 0): void {
