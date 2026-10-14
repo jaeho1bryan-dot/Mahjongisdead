@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Choice, ClientMessage, GameMode, RoomState, Seat } from '../shared/protocol'
-import { yakuValue } from '../shared/yaku'
+import { yakumanLabel } from '../shared/yaku'
 import { Tile } from './Tile'
 import { meldTiles } from './tiles'
 import { useGame } from './useGame'
@@ -175,7 +175,7 @@ function Table({ state, send, busy, sound }: { state: RoomState; send: (m: Clien
     {showResult && <ResultDialog close={() => setDismissedResult(resultKey)}>
       <span className="eyebrow">HAND RESULT</span><h2>{state.result!.title}</h2>{state.result!.winner && <p className="result-winner">{state.result!.winner}</p>}
       <div className="winning-hand">{state.result!.hand?.map((p, i) => <Tile small code={p} key={i} />)}<Melds melds={state.result!.melds || []} /></div>
-      {!!state.result!.points && <div className="result-points">{state.result!.points.toLocaleString()} <small>점 · {state.result!.yakuman ? yakuValue('*'.repeat(state.result!.yakuman)) : `${state.result!.fu ? `${state.result!.fu}부 ` : ''}${state.result!.han ?? 0}판`}</small></div>}
+      {!!state.result!.points && <div className="result-points">{state.result!.points.toLocaleString()} <small>점 · {state.result!.yakuman ? yakumanLabel(state.result!.yakuman) : `${state.result!.fu ? `${state.result!.fu}부 ` : ''}${state.result!.han ?? 0}판`}</small></div>}
       <div className="yaku-list">{state.result!.yaku.map((y, i) => <span key={i}>{y.name} <b>{y.han}</b></span>)}</div>
       {!!state.result!.ura.length && <div className="ura">우라도라 표시패 {state.result!.ura.map((p, i) => <Tile small key={i} code={p} />)}</div>}
       <div className="result-scores">{state.seats.map(s => <div key={s.id}><span>{s.name}</span><strong className={(state.result!.deltas[s.id] || 0) >= 0 ? 'positive' : 'negative'}>{(state.result!.deltas[s.id] || 0) > 0 ? '+' : ''}{(state.result!.deltas[s.id] || 0).toLocaleString()}</strong></div>)}</div>

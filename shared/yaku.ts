@@ -25,6 +25,10 @@ export function yakuName(name: string): string {
 /** Korean han label: numbers are han, `*` marks are multiples of yakuman. */
 export function yakuValue(value: number | string): string {
   if (typeof value === 'number') return `${value}판`
-  if (/^\*+$/.test(value)) return value.length === 1 ? '역만' : value.length === 2 ? '더블 역만' : `${value.length}배 역만`
+  if (/^\*+$/.test(value)) return yakumanLabel(value.length)
   return value
+}
+
+export function yakumanLabel(count: number): string {
+  return count === 1 ? '역만' : count === 2 ? '더블 역만' : `${count}배 역만`
 }
