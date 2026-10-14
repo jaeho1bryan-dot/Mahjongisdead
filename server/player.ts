@@ -94,7 +94,7 @@ export class TablePlayer extends Majiang.Player {
   action_gang(meld: Meld): void {
     this.event = `${this.model.player[this.model.player_id[meld.l]]} declares kan`
     const choices: Decision[] = []
-    // The engine permits robbing added kans, not closed kans.
+    // Core rules permit robbing added kans, not closed kans (including thirteen orphans).
     if (meld.l !== this._menfeng && !/^[mpsz]\d{4}$/.test(meld.m)) {
       const tile = meld.m[0] + meld.m.slice(-1) + '_+=-'[(4 + meld.l - this._menfeng) % 4]
       if (this.allow_hule(this.shoupai, tile, true)) {

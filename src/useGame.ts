@@ -25,12 +25,16 @@ export function useGame() {
       if (disposed) return
       setConnection('connecting')
       const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`)
+      let restoring = false
       socket.current = ws
       ws.onopen = () => {
         if (disposed) { ws.close(); return }
         attempts = 0
         setConnection('online')
-        if (session.current) ws.send(JSON.stringify({ type: 'resume', ...session.current }))
+        if (session.current) {
+          restoring = true
+          ws.send(JSON.stringify({ type: 'resume', ...session.current }))
+        }
       }
       ws.onmessage = event => {
         if (disposed) return
@@ -39,12 +43,19 @@ export function useGame() {
         setBusy(false)
         clearTimeout(busyTimer.current)
         if (msg.type === 'session') {
+          restoring = false
           session.current = { roomId: msg.roomId, token: msg.token }
           try { sessionStorage.setItem(sessionKey, JSON.stringify(session.current)) } catch { /* Storage may be unavailable in private browsing. */ }
           setError('')
         } else if (msg.type === 'state') {
           setState(msg.state)
         } else if (msg.type === 'error') {
+          if (restoring) {
+            restoring = false
+            session.current = null
+            try { sessionStorage.removeItem(sessionKey) } catch { /* Storage is optional. */ }
+            setState(null)
+          }
           setError(msg.message)
         } else if (msg.type === 'left') {
           session.current = null
@@ -53,10 +64,16 @@ export function useGame() {
         }
       }
       ws.onerror = () => ws.close()
-      ws.onclose = () => {
+      ws.onclose = event => {
         if (disposed) return
         setConnection('offline')
         setBusy(false)
+        if (event.code === 4001 || event.code === 4002) {
+          session.current = null
+          try { sessionStorage.removeItem(sessionKey) } catch { /* Storage is optional. */ }
+          setState(null)
+          setError(event.code === 4001 ? '다른 탭에서 자리가 복구되었습니다. 이 탭은 로비로 돌아갑니다.' : '방이 만료되었습니다. 새 방을 만들어 주세요.')
+        }
         retry = setTimeout(connect, Math.min(1000 * 2 ** attempts++, 10000))
       }
     }

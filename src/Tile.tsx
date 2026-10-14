@@ -1,4 +1,4 @@
-import { tileName } from './tiles'
+import { tileName } from './tiles.js'
 
 const digits = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九']
 const honors = ['', '東', '南', '西', '北', '白', '發', '中']

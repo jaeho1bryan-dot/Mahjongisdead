@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module'
+import { randomInt } from 'node:crypto'
 
 export type Rule = Record<string, unknown>
 export interface Hand {
@@ -88,11 +89,25 @@ export interface EnginePlayer {
 export interface EngineGame {
   model: Board
   speed: number
+  _rule: Rule
   _timeout_id?: ReturnType<typeof setTimeout>
   kaiju(dealer?: number): void
+  qipai(wall?: Wall): void
   stop(callback?: () => void): void
   delay(callback: () => void, timeout?: number): void
   do_sync(): EngineGame
+}
+export interface Wall {
+  _pai: string[]
+  _baopai: string[]
+  _fubaopai: string[] | null
+  paishu: number
+  baopai: string[]
+  fubaopai: string[] | null
+  zimo(): string
+  gangzimo(): string
+  kaigang(): void
+  close(): void
 }
 interface GameConstructor {
   new(players: EnginePlayer[], callback?: (summary: Summary) => void, rule?: Rule, title?: string): EngineGame
@@ -117,12 +132,7 @@ interface Engine {
   Player: new() => EnginePlayer
   Game: GameConstructor
   Shoupai: { new(tiles?: string[]): Hand; fromString(value: string): Hand }
-  Shan: {
-    new(rule?: Rule): {
-      paishu: number; baopai: string[]; zimo(): string; gangzimo(): string
-      kaigang(): void; close(): void; fubaopai: string[]
-    }
-  }
+  Shan: new(rule: Rule) => Wall
   Util: {
     xiangting(hand: Hand): number
     tingpai(hand: Hand): string[]
@@ -132,6 +142,20 @@ interface Engine {
 
 // majiang-core is CommonJS and ships no declarations. Keep the typed boundary here.
 export const Majiang = createRequire(import.meta.url)('@kobalab/majiang-core') as Engine
+
+export function createSecureWall(rule: Rule): Wall {
+  const wall = new Majiang.Shan(rule)
+  for (let i = wall._pai.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1)
+    const tile = wall._pai[i]
+    wall._pai[i] = wall._pai[j]
+    wall._pai[j] = tile
+  }
+  // Rebind indicators after reshuffling; leave the engine's dead-wall/kan mechanics intact.
+  wall._baopai = [wall._pai[4]]
+  wall._fubaopai = rule['裏ドラあり'] ? [wall._pai[9]] : null
+  return wall
+}
 
 export function handTiles(hand: Hand): string[] {
   const tiles: string[] = Array<string>(hand._bingpai._).fill('_')

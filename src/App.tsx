@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { Choice, ClientMessage, GameMode, RoomState, Seat } from '../shared/protocol'
 import { Tile } from './Tile'
 import { meldTiles } from './tiles'
@@ -9,7 +10,23 @@ const winds = ['東', '南', '西', '北']
 const modes = { hand: '한 판 연습', east: '동풍전', south: '반장전' }
 
 function Melds({ melds }: { melds: string[] }) {
-  return <div className="melds">{melds.map((m, i) => <div className="meld" key={`${m}-${i}`} title={m}>{meldTiles(m).map((t, j) => <Tile key={j} code={t} small />)}</div>)}</div>
+  return <div className="melds">{melds.map((m, i) => {
+    const tiles = meldTiles(m)
+    const marker = m.search(/[+=-]/)
+    const calledIndex = marker > 0 ? meldTiles(m.slice(0, marker)).length - 1 : -1
+    const added = tiles.length === 4 && marker > 0 && /\d$/.test(m)
+    const closed = tiles.length === 4 && marker < 0
+    return <div className="meld" key={`${m}-${i}`} title={closed ? '암깡' : added ? '가깡' : m}>
+      {tiles.map((tile, j) => {
+        if (added && j === tiles.length - 1) return null
+        const called = j === calledIndex
+        return <span key={j} className={called ? 'meld-called' : undefined}>
+          <Tile code={closed && (j === 0 || j === 3) ? '_' : tile} small />
+          {added && called && <span className="meld-added"><Tile code={tiles[3]} small /></span>}
+        </span>
+      })}
+    </div>
+  })}</div>
 }
 
 function PlayerInfo({ seat, active, self = false }: { seat: Seat; active: boolean; self?: boolean }) {
@@ -53,6 +70,12 @@ function Help({ close }: { close: () => void }) {
     <p className="help-note">친구와 플레이하려면 방 코드를 공유하세요. 시작 시 빈 자리는 연습 봇으로 채워집니다. 봇은 패 효율 중심의 연습 상대이며 숙련 AI는 아닙니다.</p>
     <button className="primary" onClick={close}>이해했어요</button>
   </dialog>
+}
+
+function ResultDialog({ children, close }: { children: ReactNode; close: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null)
+  useEffect(() => { ref.current?.showModal() }, [])
+  return <dialog ref={ref} className="result-card" onCancel={event => { event.preventDefault(); close() }} aria-label="국 결과">{children}</dialog>
 }
 
 function Lobby({ state, send, busy }: { state: RoomState; send: (m: ClientMessage) => void; busy: boolean }) {
@@ -147,7 +170,7 @@ function Table({ state, send, busy, sound }: { state: RoomState; send: (m: Clien
         {!state.choices.length && <span className="waiting-label">{state.status === 'finished' ? '수고하셨습니다' : '다른 플레이어의 차례'}</span>}
       </div></div>
     </section>
-    {showResult && <div className="result-overlay"><section className="result-card" role="dialog" aria-modal="true" aria-label="국 결과">
+    {showResult && <ResultDialog close={() => setDismissedResult(resultKey)}>
       <span className="eyebrow">HAND RESULT</span><h2>{state.result!.title}</h2>{state.result!.winner && <p className="result-winner">{state.result!.winner}</p>}
       <div className="winning-hand">{state.result!.hand?.map((p, i) => <Tile small code={p} key={i} />)}<Melds melds={state.result!.melds || []} /></div>
       {!!state.result!.points && <div className="result-points">{state.result!.points.toLocaleString()} <small>점 · {state.result!.fu || '—'}부 {state.result!.han || '역만'}판</small></div>}
@@ -156,7 +179,7 @@ function Table({ state, send, busy, sound }: { state: RoomState; send: (m: Clien
       <div className="result-scores">{state.seats.map(s => <div key={s.id}><span>{s.name}</span><strong className={(state.result!.deltas[s.id] || 0) >= 0 ? 'positive' : 'negative'}>{(state.result!.deltas[s.id] || 0) > 0 ? '+' : ''}{(state.result!.deltas[s.id] || 0).toLocaleString()}</strong></div>)}</div>
       <button className="primary" disabled={busy} onClick={() => { if (continueChoice) act(continueChoice); setDismissedResult(resultKey) }}>{continueChoice ? '확인 · 다음 국' : '확인'} →</button>
       <small className="muted">모두 확인하거나 제한 시간이 지나면 진행됩니다.</small>
-    </section></div>}
+    </ResultDialog>}
     {state.status === 'finished' && !showResult && <section className="final-results panel"><span className="eyebrow">FINAL RESULTS</span><h2>좋은 대국이었습니다.</h2>{state.ranking?.map(p => <div className="ranking-row" key={p.rank}><b>{p.rank}위</b><span>{p.name}</span><strong>{p.score.toLocaleString()}점</strong></div>)}<button className="primary" onClick={() => send({ type: 'leave' })}>로비로 돌아가기</button></section>}
   </main>
 }

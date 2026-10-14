@@ -1,7 +1,7 @@
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
 import { WebSocket } from 'ws'
 import type { Choice, GameMode, RoomState, Seat, ServerMessage } from '../shared/protocol.js'
-import { handTiles, Majiang, type ReplyCallback, type Summary } from './engine.js'
+import { createSecureWall, handTiles, Majiang, type ReplyCallback, type Summary, type Wall } from './engine.js'
 import { chooseBot, TablePlayer, type Decision } from './player.js'
 
 export interface RoomOptions { actionTimeoutMs: number; botDelayMs: number }
@@ -26,6 +26,10 @@ export interface Occupant {
 class DisposableGame extends Majiang.Game {
   private timers = new Set<ReturnType<typeof setTimeout>>()
   private disposed = false
+
+  override qipai(wall?: Wall): void {
+    if (!this.disposed) super.qipai(wall ?? createSecureWall(this._rule))
+  }
 
   override delay(callback: () => void, timeout = 0): void {
     if (this.disposed) return
@@ -144,7 +148,7 @@ export class Room {
     this.game = new DisposableGame(this.seats.map(seat => seat!.player!), () => {}, rule, 'Mahjong is Dead')
     this.game.model.player = this.seats.map(seat => seat!.name)
     this.game.speed = 0
-    this.game.kaiju()
+    this.game.kaiju(randomInt(4))
     this.lastActive = Date.now()
     this.broadcast()
   }
@@ -210,13 +214,18 @@ export class Room {
       const wind = hasHand ? model!.player_id.indexOf(id) : id
       const hand = hasHand ? model!.shoupai[wind] : undefined
       const ownTiles = hand && self.id === id ? handTiles(hand) : undefined
+      const drawn = self.id === id && hand?._zimo && /^[mpsz]\d$/.test(hand._zimo) ? hand._zimo : undefined
+      if (ownTiles && drawn) {
+        const index = ownTiles.indexOf(drawn)
+        if (index >= 0) ownTiles.splice(index, 1)
+      }
       const pendingDelta = this.status === 'playing' ? self.player?.result?.deltas[id] ?? 0 : 0
       return {
         id, name: slot?.name ?? 'Open seat', bot: Boolean(slot?.auto), connected: Boolean(slot?.socket),
         wind, score: (model?.defen?.[id] ?? 25000) + pendingDelta,
         concealed: hand ? handTiles(hand).length : 0,
         ...(ownTiles ? { hand: ownTiles } : {}),
-        ...(self.id === id && hand?._zimo && /^[mpsz]\d$/.test(hand._zimo) ? { drawn: hand._zimo } : {}),
+        ...(drawn ? { drawn } : {}),
         melds: hand ? [...hand._fulou] : [], river: hasHand ? [...model!.he[wind]._pai] : [],
         riichi: Boolean(hand?.lizhi),
       }

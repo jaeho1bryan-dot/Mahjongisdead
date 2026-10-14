@@ -7,7 +7,7 @@
     "dev": "vite",
     "dev:server": "tsx watch server/index.ts",
     "start": "tsx server/index.ts",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "tsx --tsconfig tsconfig.app.json --test tests/*.test.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { handTiles, Majiang, type EngineMessage } from '../server/engine.js'
+import { createSecureWall, handTiles, Majiang, type EngineMessage, type Summary } from '../server/engine.js'
 import { chooseBot, TablePlayer, type Decision } from '../server/player.js'
 
 const rule = Majiang.rule()
-function fixture(hand: string, otherHands = ['', '', '']) {
+function fixture(hand: string, otherHands = ['', '', ''], options: { id?: number; dealer?: number; hand?: number } = {}) {
   let decisions: Decision[] = []
   const player = new TablePlayer({
     decide: (_player, choices) => { decisions = choices },
@@ -16,16 +16,28 @@ function fixture(hand: string, otherHands = ['', '', '']) {
     player.action(message, () => {})
     return decisions
   }
-  feed({ kaiju: { id: 0, rule, title: 'Test', player: ['A', 'B', 'C', 'D'], qijia: 0 } })
+  feed({ kaiju: { id: options.id ?? 0, rule, title: 'Test', player: ['A', 'B', 'C', 'D'], qijia: options.dealer ?? 0 } })
   feed({ qipai: {
-    zhuangfeng: 0, jushu: 0, changbang: 0, lizhibang: 0, defen: [25000, 25000, 25000, 25000],
+    zhuangfeng: 0, jushu: options.hand ?? 0, changbang: 0, lizhibang: 0, defen: [25000, 25000, 25000, 25000],
     baopai: 'z7', shoupai: [hand, ...otherHands],
   } })
   return { player, feed }
 }
 
-test('standard wall: 136 physical tiles, 122 live draws, red fives, dead wall and kan dora', () => {
-  const wall = new Majiang.Shan(rule)
+test('secure wall: 136 physical tiles, 122 live draws, red fives, dead wall and kan dora', () => {
+  const wall = createSecureWall(rule)
+  assert.equal(wall._pai.length, 136)
+  const allCounts = new Map<string, number>()
+  for (const tile of wall._pai) {
+    const normalized = tile.replace('0', '5')
+    allCounts.set(normalized, (allCounts.get(normalized) ?? 0) + 1)
+  }
+  assert.equal(allCounts.size, 34)
+  assert.ok([...allCounts.values()].every(count => count === 4))
+  assert.deepEqual(wall._pai.filter(tile => tile[1] === '0').sort(), ['m0', 'p0', 's0'])
+  assert.deepEqual(wall.baopai, [wall._pai[4]])
+  assert.equal(wall.fubaopai, null)
+  assert.deepEqual(wall._fubaopai, [wall._pai[9]])
   assert.equal(wall.paishu, 122)
   assert.equal(wall.baopai.length, 1)
   const live: string[] = []
@@ -39,13 +51,16 @@ test('standard wall: 136 physical tiles, 122 live draws, red fives, dead wall an
   }
   assert.ok([...counts.values()].every(n => n <= 4))
   assert.ok(live.filter(tile => tile[1] === '0').length <= 3)
-  const kanWall = new Majiang.Shan(rule)
+  const kanWall = createSecureWall(rule)
   kanWall.gangzimo()
   assert.equal(kanWall.paishu, 121)
   kanWall.kaigang()
   assert.equal(kanWall.baopai.length, 2)
   kanWall.close()
-  assert.equal(kanWall.fubaopai.length, 2)
+  assert.equal(kanWall.fubaopai?.length, 2)
+  const noUra = createSecureWall(Majiang.rule({ '裏ドラあり': false }))
+  noUra.close()
+  assert.equal(noUra.fubaopai, null)
 })
 
 test('tile serialization accounts for red fives exactly once and separates melds', () => {
@@ -139,6 +154,9 @@ test('robbing added kan offers ron before furiten update, closed kan is not robb
   assert.equal(added.player._neng_rong, false)
   const closed = fixture('m24p234s234678z11')
   assert.deepEqual(closed.feed({ gang: { l: 1, m: 'm3333' } }), [])
+  const orphans = fixture('m19p19s19z1234567')
+  assert.equal(orphans.player.allow_hule(orphans.player.shoupai, 'm1+'), true)
+  assert.deepEqual(orphans.feed({ gang: { l: 1, m: 'm1111' } }), [])
 })
 
 test('riichi requires sufficient points, closed tenpai and remaining draws; nine-terminals abort is offered', () => {
@@ -166,4 +184,64 @@ test('result presentation exposes scoring but never forwards the engine full-gam
   assert.equal(player.result?.hand?.length, 14)
   assert.deepEqual(player.result?.deltas, [-500, 1100, -300, -300])
   assert.deepEqual(offers.map(d => d.choice.kind), ['continue'])
+})
+
+test('rotated seat winds map result winners and score deltas to absolute player IDs', () => {
+  const { player, feed } = fixture('m234456p22345s45', ['', '', ''], { id: 3, dealer: 2, hand: 1 })
+  assert.deepEqual(player.model.player_id, [3, 0, 1, 2])
+  feed({ hule: {
+    l: 1, shoupai: 'm123456p123s456z11', baojia: null, fubaopai: null,
+    fu: 30, fanshu: 1, defen: 1100, hupai: [{ name: '門前清自摸和', fanshu: 1 }],
+    fenpei: [-500, 1100, -300, -300],
+  } })
+  assert.equal(player.result?.winner, 'A')
+  assert.deepEqual(player.result?.deltas, [1100, -300, -300, -500])
+})
+
+test('deterministic full Game accepts deferred-eligibility ron and ends with scored rankings', () => {
+  const testRule = Majiang.rule({ '場数': 0, '赤牌': { m: 0, p: 0, s: 0 } })
+  const wall = new Majiang.Shan(testRule)
+  const pool = wall._pai.slice().sort()
+  const take = (tile: string): string => {
+    const index = pool.indexOf(tile)
+    assert.ok(index >= 0, `No ${tile} available`)
+    return pool.splice(index, 1)[0]
+  }
+  const winner = handTiles(Majiang.Shoupai.fromString('m234456p22345s45')).map(take)
+  const discard = take('s6')
+  const firstDraw = take('z7')
+  const dealer = [discard, ...pool.splice(0, 12)]
+  const west = pool.splice(0, 13)
+  const north = pool.splice(0, 13)
+  wall._pai = [...pool, ...[...dealer, ...winner, ...west, ...north, firstDraw].reverse()]
+  wall._baopai = [wall._pai[4]]
+  wall._fubaopai = [wall._pai[9]]
+  class FixedGame extends Majiang.Game {
+    override kaiju(): void { super.kaiju(0) }
+    override qipai(): void { super.qipai(wall) }
+  }
+  let final: Summary | undefined
+  let ronAccepted = false
+  const players: TablePlayer[] = []
+  for (let id = 0; id < 4; id++) players.push(new TablePlayer({
+    decide: (player, choices, callback) => {
+      const selected = id === 0
+        ? choices.find(d => d.reply.dapai === 's6') ?? chooseBot(player, choices)
+        : chooseBot(player, choices)
+      if (id === 1 && selected.choice.kind === 'ron') ronAccepted = true
+      callback(selected.reply)
+    },
+    changed: () => {},
+    finished: summary => { final = summary },
+  }))
+  const game = new FixedGame(players, () => {}, testRule)
+  game.do_sync()
+  assert.equal(ronAccepted, true)
+  assert.equal(players[1].result?.title, 'Ron · discard win')
+  assert.ok(players[1].result!.yaku.length > 0)
+  assert.ok(final)
+  assert.equal(final.rank[1], 1)
+  assert.equal(final.defen.reduce((sum, points) => sum + points, 0), 100000)
+  assert.ok(final.defen[1] > 25000)
+  assert.ok(final.defen[0] < 25000)
 })
