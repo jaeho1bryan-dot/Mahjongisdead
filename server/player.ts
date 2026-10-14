@@ -1,7 +1,7 @@
 import type { Choice, HandResult } from '../shared/protocol.js'
 import { meldTiles, tileName } from '../src/tiles.js'
 import {
-  Majiang, handTiles, type Draw, type EngineMessage, type ExhaustiveDraw,
+  canRobClosedKan, Majiang, handTiles, type Draw, type EngineMessage, type ExhaustiveDraw,
   type Meld, type Reply, type ReplyCallback, type Summary, type Win,
 } from './engine.js'
 
@@ -37,7 +37,7 @@ export class TablePlayer extends Majiang.Player {
   action_kaiju(): void { this.offer([]) }
   action_qipai(): void {
     this.result = null
-    this.event = '새로운 국이 시작되었습니다'
+    this.event = `새로운 국이 시작되었습니다 · 친(오야): ${this.model.player[this.model.player_id[0]]}`
     this.offer([])
   }
 
@@ -95,12 +95,15 @@ export class TablePlayer extends Majiang.Player {
   action_gang(meld: Meld): void {
     this.event = `${this.model.player[this.model.player_id[meld.l]]}님이 깡을 선언했습니다`
     const choices: Decision[] = []
-    // Core rules permit robbing added kans, not closed kans (including thirteen orphans).
-    if (meld.l !== this._menfeng && !/^[mpsz]\d{4}$/.test(meld.m)) {
+    if (meld.l !== this._menfeng) {
       const tile = meld.m[0] + meld.m.slice(-1) + '_+=-'[(4 + meld.l - this._menfeng) % 4]
-      if (this.allow_hule(this.shoupai, tile, true)) {
-        choices.push(decision('ron', '론 · 창깡', { hule: '-' }))
+      // Added kans can be robbed by any winning hand; closed kans only by thirteen orphans.
+      const closed = /^[mpsz]\d{4}$/.test(meld.m)
+      if (closed ? canRobClosedKan(this.shoupai, tile, this._neng_rong) : this.allow_hule(this.shoupai, tile, true)) {
+        choices.push(decision('ron', closed ? '론 · 국사무쌍 암깡 창깡' : '론 · 창깡', { hule: '-' }))
         choices.push(decision('pass', '넘기기', {}))
+        // Player.gang only applies temporary furiten for added kans. Captured choices above stay valid.
+        if (closed) this._neng_rong = false
       }
     }
     this.offer(choices)

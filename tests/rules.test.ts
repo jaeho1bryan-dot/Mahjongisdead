@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createSecureWall, handTiles, Majiang, type EngineMessage, type Summary } from '../server/engine.js'
 import { chooseBot, TablePlayer, type Decision } from '../server/player.js'
+import { DisposableGame } from '../server/room.js'
 
 const rule = Majiang.rule()
 function fixture(hand: string, otherHands = ['', '', ''], options: { id?: number; dealer?: number; hand?: number } = {}) {
@@ -147,16 +148,51 @@ test('chi direction, pon, open kan, closed kan, added kan, and kuikae come from 
   assert.ok(after.every(d => d.choice.kind === 'discard' && d.choice.tile?.slice(0, 2) !== 'm3'))
 })
 
-test('robbing added kan offers ron before furiten update, closed kan is not robbable', () => {
+test('robbing added kan offers ron before furiten update; closed kan is robbable only by thirteen orphans', () => {
   const added = fixture('m24p234s234678z11', ['__________,m333+', '', ''])
   const choices = added.feed({ gang: { l: 1, m: 'm333+3' } })
   assert.ok(choices.some(d => d.choice.kind === 'ron'))
   assert.equal(added.player._neng_rong, false)
   const closed = fixture('m24p234s234678z11')
   assert.deepEqual(closed.feed({ gang: { l: 1, m: 'm3333' } }), [])
+  assert.equal(closed.player._neng_rong, true)
   const orphans = fixture('m19p19s19z1234567')
-  assert.equal(orphans.player.allow_hule(orphans.player.shoupai, 'm1+'), true)
-  assert.deepEqual(orphans.feed({ gang: { l: 1, m: 'm1111' } }), [])
+  const robbed = orphans.feed({ gang: { l: 1, m: 'm1111' } })
+  assert.deepEqual(robbed.map(d => d.choice.kind), ['ron', 'pass'])
+  assert.equal(chooseBot(orphans.player, robbed).choice.kind, 'ron')
+  assert.equal(orphans.player._neng_rong, false)
+  const notWaiting = fixture('m119p19s19z234567')
+  assert.deepEqual(notWaiting.feed({ gang: { l: 1, m: 'm9999' } }), [])
+  const furiten = fixture('m19p19s19z1234567')
+  furiten.player._neng_rong = false
+  assert.deepEqual(furiten.feed({ gang: { l: 1, m: 'z1111' } }), [])
+})
+
+test('kuikae is forbidden for same tile, suji tiles and red fives, and calls that leave no legal discard are hidden', () => {
+  const suji = fixture('m234p123s456z1112')
+  assert.ok(suji.feed({ dapai: { l: 3, p: 'm1' } }).some(d => d.reply.fulou === 'm1-23'))
+  const afterSuji = suji.feed({ fulou: { l: 0, m: 'm1-23' } })
+  assert.ok(afterSuji.length > 0)
+  assert.ok(afterSuji.every(d => d.choice.kind === 'discard' && !['m1', 'm4'].includes(d.choice.tile!.slice(0, 2))))
+  const closedWait = fixture('m246p123s456z1112')
+  closedWait.feed({ dapai: { l: 3, p: 'm3' } })
+  const afterKanchan = closedWait.feed({ fulou: { l: 0, m: 'm23-4' } })
+  assert.ok(afterKanchan.some(d => d.choice.tile === 'm6'))
+  const pon = fixture('m3335p123s456z112')
+  pon.feed({ dapai: { l: 2, p: 'm3' } })
+  const afterPon = pon.feed({ fulou: { l: 0, m: 'm333=' } })
+  assert.ok(afterPon.length > 0)
+  assert.ok(afterPon.every(d => d.choice.tile!.slice(0, 2) !== 'm3'))
+  const red = fixture('m0567p123s456z111')
+  red.feed({ dapai: { l: 3, p: 'm5' } })
+  const afterRed = red.feed({ fulou: { l: 0, m: 'm5-67' } })
+  assert.ok(afterRed.every(d => !['m0', 'm5', 'm8'].includes(d.choice.tile!.slice(0, 2))))
+  const stuck = fixture('m1234,p111=,s222=,z111=')
+  const reactions = stuck.feed({ dapai: { l: 3, p: 'm1' } })
+  assert.ok(!reactions.some(d => d.choice.kind === 'chi'))
+  assert.ok(!stuck.feed({ dapai: { l: 3, p: 'm4' } }).some(d => d.choice.kind === 'chi'))
+  const hand = Majiang.Shoupai.fromString('m1234,p111=,s222=,z111=')
+  assert.ok(Majiang.Game.get_chi_mianzi(Majiang.rule({ '喰い替え許可レベル': 2 }), hand, 'm1-', 60)!.length > 0)
 })
 
 test('riichi requires sufficient points, closed tenpai and remaining draws; nine-terminals abort is offered', () => {
@@ -277,4 +313,47 @@ test('deterministic full Game accepts deferred-eligibility ron and ends with sco
   assert.equal(final.defen.reduce((sum, points) => sum + points, 0), 100000)
   assert.ok(final.defen[1] > 25000)
   assert.ok(final.defen[0] < 25000)
+})
+
+test('full Game lets thirteen orphans rob a closed kan without revealing a new kan dora', () => {
+  const testRule = Majiang.rule({ '場数': 0, '赤牌': { m: 0, p: 0, s: 0 } })
+  const wall = new Majiang.Shan(testRule)
+  const pool = wall._pai.slice().sort()
+  const take = (tile: string): string => {
+    const index = pool.indexOf(tile)
+    assert.ok(index >= 0, `No ${tile} available`)
+    return pool.splice(index, 1)[0]
+  }
+  const dealer = handTiles(Majiang.Shoupai.fromString('m234p234s234z1112')).map(take)
+  const winner = handTiles(Majiang.Shoupai.fromString('m119p19s19z234567')).map(take)
+  const firstDraw = take('z1')
+  const west = pool.splice(0, 13)
+  const north = pool.splice(0, 13)
+  wall._pai = [...pool, ...[...dealer, ...winner, ...west, ...north, firstDraw].reverse()]
+  wall._baopai = [wall._pai[4]]
+  wall._fubaopai = [wall._pai[9]]
+  class FixedGame extends DisposableGame {
+    override kaiju(): void { super.kaiju(0) }
+    override qipai(): void { super.qipai(wall) }
+    override delay(callback: () => void): void { callback() }
+  }
+  let final: Summary | undefined
+  const players: TablePlayer[] = []
+  for (let id = 0; id < 4; id++) players.push(new TablePlayer({
+    decide: (player, choices, callback) => {
+      const selected = id === 0 && choices.find(d => d.reply.gang === 'z1111') || chooseBot(player, choices)
+      callback(selected.reply)
+    },
+    changed: () => {},
+    finished: summary => { final = summary },
+  }))
+  const game = new FixedGame(players, () => {}, testRule)
+  game.do_sync()
+  const result = players[1].result!
+  assert.equal(result.winner, players[1].model.player[1])
+  assert.ok(result.yaku.some(yaku => yaku.name.startsWith('国士無双')), JSON.stringify(result))
+  assert.deepEqual(result.deltas, [-32000, 32000, 0, 0])
+  assert.equal(players[1].model.shan!.baopai.length, 1)
+  assert.ok(final)
+  assert.deepEqual(final.defen, [-7000, 57000, 25000, 25000])
 })
