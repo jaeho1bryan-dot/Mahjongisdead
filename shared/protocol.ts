@@ -29,6 +29,7 @@ export interface HandResult {
   winner?: string
   fu?: number
   han?: number
+  yakuman?: number
   points?: number
   yaku: { name: string; han: string }[]
   deltas: number[]

@@ -6,7 +6,8 @@ import test, { type TestContext } from 'node:test'
 import { WebSocket } from 'ws'
 import type { ClientMessage, RoomState, ServerMessage } from '../shared/protocol.js'
 import { createServer, originAllowed, parseMessage, type ServerOptions } from '../server/index.js'
-import { Room } from '../server/room.js'
+import { Room, type Occupant } from '../server/room.js'
+import type { Decision } from '../server/player.js'
 
 class Client {
   readonly ws: WebSocket
@@ -359,4 +360,47 @@ test('the first dealer is drawn at random instead of always being the room owner
     room.dispose()
   }
   assert.ok(dealers.size > 1, `dealer was always seat ${[...dealers]}`)
+})
+
+test('choosing ron immediately withdraws the other players\' pending call offers', () => {
+  const room = new Room('RONCUT', 'hand', { actionTimeoutMs: 60_000, botDelayMs: 60_000 })
+  room.status = 'playing'
+  const option = (kind: Decision['choice']['kind'], reply: Decision['reply'] = {}): Decision =>
+    ({ choice: { id: `${kind}:`, kind, label: kind }, reply })
+  const replies: (Decision['reply'] | undefined)[] = []
+  const seats: Occupant[] = []
+  const offers = [
+    [option('ron', { hule: '-' }), option('pass')],
+    [option('pon', { fulou: 'm333=' }), option('kan', { fulou: 'm3333=' }), option('pass')],
+    [option('ron', { hule: '-' }), option('chi', { fulou: 'm3-12' }), option('pass')],
+    [option('chi', { fulou: 'm3-45' }), option('pass')],
+  ]
+  for (let id = 0; id < 4; id++) {
+    const seat: Occupant = { id, name: `P${id}`, auto: false, autoplayAt: 0 }
+    room.seats[id] = seat
+    seats.push(seat)
+    room['prompt'](seat, offers[id], reply => { replies[id] = reply })
+  }
+  try {
+    room.act(seats[0], seats[0].prompt!.id, 'ron:')
+    assert.deepEqual(replies[0], { hule: '-' })
+    assert.equal(seats[1].prompt, undefined)
+    assert.deepEqual(replies[1], {})
+    assert.equal(seats[3].prompt, undefined)
+    assert.deepEqual(replies[3], {})
+    assert.deepEqual(seats[2].prompt?.decisions.map(d => d.choice.kind), ['ron', 'pass'])
+    assert.deepEqual(room.state(seats[2]).choices.map(c => c.kind), ['ron', 'pass'])
+    assert.throws(() => room.act(seats[2], seats[2].prompt!.id, 'chi:'), /허용되지 않은 선택/)
+    room.act(seats[2], seats[2].prompt!.id, 'ron:')
+    assert.deepEqual(replies[2], { hule: '-' })
+
+    for (let id = 0; id < 4; id++) room['prompt'](seats[id], offers[id], reply => { replies[id] = reply })
+    room.act(seats[1], seats[1].prompt!.id, 'pon:')
+    assert.equal(seats[3].prompt, undefined)
+    assert.deepEqual(replies[3], {})
+    assert.deepEqual(seats[2].prompt?.decisions.map(d => d.choice.kind), ['ron', 'pass'])
+    assert.deepEqual(seats[0].prompt?.decisions.map(d => d.choice.kind), ['ron', 'pass'])
+  } finally {
+    room.dispose()
+  }
 })
